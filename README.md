@@ -17,7 +17,7 @@ And run `bundle install`.
 Then add this lines to your `app/assets/javascripts/application.js`:
 
 ```
-// require zepto/default
+//= require zepto/default
 ```
 
 If you only want to include some of the modules in zepto you can add them individually. The available modules are:
@@ -40,5 +40,5 @@ If you only want to include some of the modules in zepto you can add them indivi
 Or if you want to include all of the modules add this line to your `app/assets/javascripts/application.js`:
 
 ```
-// require zepto/all
+//= require zepto/all
 ```
