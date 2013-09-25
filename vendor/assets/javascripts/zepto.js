@@ -1,5 +1,5 @@
-//     Zepto.js - 0.1.0
-//     (c) 2010, 2011 Thomas Fuchs
+//     Zepto.js
+//     (c) 2010-2013 Thomas Fuchs
 //     Zepto.js may be freely distributed under the MIT license.
 
 var Zepto = (function() {
@@ -9,6 +9,7 @@ var Zepto = (function() {
     getComputedStyle = document.defaultView.getComputedStyle,
     cssNumber = { 'column-count': 1, 'columns': 1, 'font-weight': 1, 'line-height': 1,'opacity': 1, 'z-index': 1, 'zoom': 1 },
     fragmentRE = /^\s*<(\w+|!)[^>]*>/,
+    singleTagRE = /^<(\w+)\s*\/?>(?:<\/\1>|)$/,
     tagExpanderRE = /<(?!area|br|col|embed|hr|img|input|link|meta|param)(([\w:]+)[^>]*)\/>/ig,
     rootNodeRE = /^(?:body|html)$/i,
 
@@ -108,15 +109,23 @@ var Zepto = (function() {
   // This function can be overriden in plugins for example to make
   // it compatible with browsers that don't support the DOM fully.
   zepto.fragment = function(html, name, properties) {
-    if (html.replace) html = html.replace(tagExpanderRE, "<$1></$2>")
-    if (name === undefined) name = fragmentRE.test(html) && RegExp.$1
-    if (!(name in containers)) name = '*'
+    var dom, nodes, container
 
-    var nodes, dom, container = containers[name]
-    container.innerHTML = '' + html
-    dom = $.each(slice.call(container.childNodes), function(){
-      container.removeChild(this)
-    })
+    // A special case optimization for a single tag
+    if (singleTagRE.test(html)) dom = $(document.createElement(RegExp.$1))
+
+    if (!dom) {
+      if (html.replace) html = html.replace(tagExpanderRE, "<$1></$2>")
+      if (name === undefined) name = fragmentRE.test(html) && RegExp.$1
+      if (!(name in containers)) name = '*'
+
+      container = containers[name]
+      container.innerHTML = '' + html
+      dom = $.each(slice.call(container.childNodes), function(){
+        container.removeChild(this)
+      })
+    }
+
     if (isPlainObject(properties)) {
       nodes = $(dom)
       $.each(properties, function(key, value) {
@@ -124,6 +133,7 @@ var Zepto = (function() {
         else nodes.attr(key, value)
       })
     }
+
     return dom
   }
 
@@ -159,9 +169,9 @@ var Zepto = (function() {
       var dom
       // normalize array if an array of nodes is given
       if (isArray(selector)) dom = compact(selector)
-      // Wrap DOM nodes. If a plain object is given, duplicate it.
+      // Wrap DOM nodes.
       else if (isObject(selector))
-        dom = [isPlainObject(selector) ? $.extend({}, selector) : selector], selector = null
+        dom = [selector], selector = null
       // If it's a html fragment, create nodes from it
       else if (fragmentRE.test(selector))
         dom = zepto.fragment(selector.trim(), RegExp.$1, context), selector = null
@@ -223,7 +233,7 @@ var Zepto = (function() {
   }
 
   function filtered(nodes, selector) {
-    return selector === undefined ? $(nodes) : $(nodes).filter(selector)
+    return selector == null ? $(nodes) : $(nodes).filter(selector)
   }
 
   $.contains = function(parent, node) {
@@ -287,7 +297,9 @@ var Zepto = (function() {
   }
 
   $.camelCase = camelize
-  $.trim = function(str) { return str.trim() }
+  $.trim = function(str) {
+    return str == null ? "" : String.prototype.trim.call(str)
+  }
 
   // plugin compatibility
   $.uuid = 0
@@ -537,7 +549,7 @@ var Zepto = (function() {
     prev: function(selector){ return $(this.pluck('previousElementSibling')).filter(selector || '*') },
     next: function(selector){ return $(this.pluck('nextElementSibling')).filter(selector || '*') },
     html: function(html){
-      return html === undefined ?
+      return arguments.length === 0 ?
         (this.length > 0 ? this[0].innerHTML : null) :
         this.each(function(idx){
           var originHtml = this.innerHTML
@@ -545,9 +557,9 @@ var Zepto = (function() {
         })
     },
     text: function(text){
-      return text === undefined ?
+      return arguments.length === 0 ?
         (this.length > 0 ? this[0].textContent : null) :
-        this.each(function(){ this.textContent = text })
+        this.each(function(){ this.textContent = (text === undefined) ? '' : ''+text })
     },
     attr: function(name, value){
       var result
@@ -577,7 +589,7 @@ var Zepto = (function() {
       return data !== null ? deserializeValue(data) : undefined
     },
     val: function(value){
-      return (value === undefined) ?
+      return arguments.length === 0 ?
         (this[0] && (this[0].multiple ?
            $(this[0]).find('option').filter(function(o){ return this.selected }).pluck('value') :
            this[0].value)
@@ -609,8 +621,19 @@ var Zepto = (function() {
       }
     },
     css: function(property, value){
-      if (arguments.length < 2 && typeof property == 'string')
-        return this[0] && (this[0].style[camelize(property)] || getComputedStyle(this[0], '').getPropertyValue(property))
+      if (arguments.length < 2) {
+        var element = this[0], computedStyle = getComputedStyle(element, '')
+        if(!element) return
+        if (typeof property == 'string')
+          return element.style[camelize(property)] || computedStyle.getPropertyValue(property)
+        else if (isArray(property)) {
+          var props = {}
+          $.each(isArray(property) ? property: [property], function(_, prop){
+            props[prop] = (element.style[camelize(prop)] || computedStyle.getPropertyValue(prop))
+          })
+          return props
+        }
+      }
 
       var css = ''
       if (type(property) == 'string') {
@@ -665,9 +688,13 @@ var Zepto = (function() {
         })
       })
     },
-    scrollTop: function(){
+    scrollTop: function(value){
       if (!this.length) return
-      return ('scrollTop' in this[0]) ? this[0].scrollTop : this[0].scrollY
+      var hasScrollTop = 'scrollTop' in this[0]
+      if (value === undefined) return hasScrollTop ? this[0].scrollTop : this[0].scrollY
+      return this.each(hasScrollTop ?
+        function(){ this.scrollTop = value } :
+        function(){ this.scrollTo(this.scrollX, value) })
     },
     position: function() {
       if (!this.length) return
@@ -714,7 +741,7 @@ var Zepto = (function() {
       var offset, el = this[0],
         Dimension = dimension.replace(/./, function(m){ return m[0].toUpperCase() })
       if (value === undefined) return isWindow(el) ? el['inner' + Dimension] :
-        isDocument(el) ? el.documentElement['offset' + Dimension] :
+        isDocument(el) ? el.documentElement['scroll' + Dimension] :
         (offset = this.offset()) && offset[dimension]
       else return this.each(function(idx){
         el = $(this)
@@ -785,5 +812,6 @@ var Zepto = (function() {
   return $
 })()
 
+// If `$` is not yet defined, point it to `Zepto`
 window.Zepto = Zepto
-'$' in window || (window.$ = Zepto)
+window.$ === undefined && (window.$ = Zepto)

@@ -1,126 +1,117 @@
 //     Zepto.js
-//     (c) 2010, 2011 Thomas Fuchs
+//     (c) 2010-2013 Thomas Fuchs
 //     Zepto.js may be freely distributed under the MIT license.
 
-(function($){
+;(function($){
   var jsonpID = 0,
-      isObject = $.isObject,
       document = window.document,
       key,
-      name;
+      name,
+      rscript = /<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi,
+      scriptTypeRE = /^(?:text|application)\/javascript/i,
+      xmlTypeRE = /^(?:text|application)\/xml/i,
+      jsonType = 'application/json',
+      htmlType = 'text/html',
+      blankRE = /^\s*$/
 
   // trigger a custom event and return false if it was cancelled
   function triggerAndReturn(context, eventName, data) {
-    var event = $.Event(eventName);
-    $(context).trigger(event, data);
-    return !event.defaultPrevented;
+    var event = $.Event(eventName)
+    $(context).trigger(event, data)
+    return !event.defaultPrevented
   }
 
   // trigger an Ajax "global" event
   function triggerGlobal(settings, context, eventName, data) {
-    if (settings.global) return triggerAndReturn(context || document, eventName, data);
+    if (settings.global) return triggerAndReturn(context || document, eventName, data)
   }
 
   // Number of active Ajax requests
-  $.active = 0;
+  $.active = 0
 
   function ajaxStart(settings) {
-    if (settings.global && $.active++ === 0) triggerGlobal(settings, null, 'ajaxStart');
+    if (settings.global && $.active++ === 0) triggerGlobal(settings, null, 'ajaxStart')
   }
   function ajaxStop(settings) {
-    if (settings.global && !(--$.active)) triggerGlobal(settings, null, 'ajaxStop');
+    if (settings.global && !(--$.active)) triggerGlobal(settings, null, 'ajaxStop')
   }
 
   // triggers an extra global event "ajaxBeforeSend" that's like "ajaxSend" but cancelable
   function ajaxBeforeSend(xhr, settings) {
-    var context = settings.context;
+    var context = settings.context
     if (settings.beforeSend.call(context, xhr, settings) === false ||
         triggerGlobal(settings, context, 'ajaxBeforeSend', [xhr, settings]) === false)
-      return false;
+      return false
 
-    triggerGlobal(settings, context, 'ajaxSend', [xhr, settings]);
+    triggerGlobal(settings, context, 'ajaxSend', [xhr, settings])
   }
   function ajaxSuccess(data, xhr, settings) {
-    var context = settings.context, status = 'success';
-    settings.success.call(context, data, status, xhr);
-    triggerGlobal(settings, context, 'ajaxSuccess', [xhr, settings, data]);
-    ajaxComplete(status, xhr, settings);
+    var context = settings.context, status = 'success'
+    settings.success.call(context, data, status, xhr)
+    triggerGlobal(settings, context, 'ajaxSuccess', [xhr, settings, data])
+    ajaxComplete(status, xhr, settings)
   }
   // type: "timeout", "error", "abort", "parsererror"
   function ajaxError(error, type, xhr, settings) {
-    var context = settings.context;
-    settings.error.call(context, xhr, type, error);
-    triggerGlobal(settings, context, 'ajaxError', [xhr, settings, error]);
-    ajaxComplete(type, xhr, settings);
+    var context = settings.context
+    settings.error.call(context, xhr, type, error)
+    triggerGlobal(settings, context, 'ajaxError', [xhr, settings, error || type])
+    ajaxComplete(type, xhr, settings)
   }
   // status: "success", "notmodified", "error", "timeout", "abort", "parsererror"
   function ajaxComplete(status, xhr, settings) {
-    var context = settings.context;
-    settings.complete.call(context, xhr, status);
-    triggerGlobal(settings, context, 'ajaxComplete', [xhr, settings]);
-    ajaxStop(settings);
+    var context = settings.context
+    settings.complete.call(context, xhr, status)
+    triggerGlobal(settings, context, 'ajaxComplete', [xhr, settings])
+    ajaxStop(settings)
   }
 
   // Empty function, used as default callback
   function empty() {}
 
-  // ### $.ajaxJSONP
-  //
-  // Load JSON from a server in a different domain (JSONP)
-  //
-  // *Arguments:*
-  //
-  //     options — object that configure the request,
-  //               see avaliable options below
-  //
-  // *Avaliable options:*
-  //
-  //     url     — url to which the request is sent
-  //     success — callback that is executed if the request succeeds
-  //     error   — callback that is executed if the server drops error
-  //     context — in which context to execute the callbacks in
-  //
-  // *Example:*
-  //
-  //     $.ajaxJSONP({
-  //        url:     'http://example.com/projects?callback=?',
-  //        success: function (data) {
-  //            projects.push(json);
-  //        }
-  //     });
-  //
   $.ajaxJSONP = function(options){
-    var callbackName = 'jsonp' + (++jsonpID),
+    if (!('type' in options)) return $.ajax(options)
+
+    var _callbackName = options.jsonpCallback,
+      callbackName = ($.isFunction(_callbackName) ?
+        _callbackName() : _callbackName) || ('jsonp' + (++jsonpID)),
       script = document.createElement('script'),
-      abort = function(){
-        $(script).remove();
-        if (callbackName in window) window[callbackName] = empty;
-        ajaxComplete(xhr, options, 'abort');
+      cleanup = function() {
+        clearTimeout(abortTimeout)
+        $(script).remove()
+        delete window[callbackName]
       },
-      xhr = { abort: abort }, abortTimeout;
+      abort = function(type){
+        cleanup()
+        // In case of manual abort or timeout, keep an empty function as callback
+        // so that the SCRIPT tag that eventually loads won't result in an error.
+        if (!type || type == 'timeout') window[callbackName] = empty
+        ajaxError(null, type || 'abort', xhr, options)
+      },
+      xhr = { abort: abort }, abortTimeout
+
+    if (ajaxBeforeSend(xhr, options) === false) {
+      abort('abort')
+      return false
+    }
 
     window[callbackName] = function(data){
-      clearTimeout(abortTimeout);
-      $(script).remove();
-      delete window[callbackName];
-      ajaxSuccess(data, xhr, options);
-    };
+      cleanup()
+      ajaxSuccess(data, xhr, options)
+    }
 
-    script.src = options.url.replace(/=\?/, '=' + callbackName);
-    $('head').append(script);
+    script.onerror = function() { abort('error') }
+
+    script.src = options.url.replace(/=\?/, '=' + callbackName)
+    $('head').append(script)
 
     if (options.timeout > 0) abortTimeout = setTimeout(function(){
-        xhr.abort();
-        ajaxComplete(xhr, options, 'timeout');
-      }, options.timeout);
+      abort('timeout')
+    }, options.timeout)
 
-    return xhr;
-  };
+    return xhr
+  }
 
-  // ### $.ajaxSettings
-  //
-  // AJAX settings
-  //
   $.ajaxSettings = {
     // Default type of request
     type: 'GET',
@@ -138,281 +129,191 @@
     global: true,
     // Transport
     xhr: function () {
-      return new window.XMLHttpRequest();
+      return new window.XMLHttpRequest()
     },
     // MIME types mapping
     accepts: {
       script: 'text/javascript, application/javascript',
-      json:   'application/json',
+      json:   jsonType,
       xml:    'application/xml, text/xml',
-      html:   'text/html',
+      html:   htmlType,
       text:   'text/plain'
     },
     // Whether the request is to another domain
     crossDomain: false,
     // Default timeout
-    timeout: 0
-  };
+    timeout: 0,
+    // Whether data should be serialized to string
+    processData: true,
+    // Whether the browser should be allowed to cache GET responses
+    cache: true
+  }
 
-  // ### $.ajax
-  //
-  // Perform AJAX request
-  //
-  // *Arguments:*
-  //
-  //     options — object that configure the request,
-  //               see avaliable options below
-  //
-  // *Avaliable options:*
-  //
-  //     type ('GET')          — type of request GET / POST
-  //     url (window.location) — url to which the request is sent
-  //     data                  — data to send to server,
-  //                             can be string or object
-  //     dataType ('json')     — what response type you accept from
-  //                             the server:
-  //                             'json', 'xml', 'html', or 'text'
-  //     timeout (0)           — request timeout
-  //     beforeSend            — callback that is executed before
-  //                             request send
-  //     complete              — callback that is executed on request
-  //                             complete (both: error and success)
-  //     success               — callback that is executed if
-  //                             the request succeeds
-  //     error                 — callback that is executed if
-  //                             the server drops error
-  //     context               — in which context to execute the
-  //                             callbacks in
-  //
-  // *Example:*
-  //
-  //     $.ajax({
-  //        type:       'POST',
-  //        url:        '/projects',
-  //        data:       { name: 'Zepto.js' },
-  //        dataType:   'html',
-  //        timeout:    100,
-  //        context:    $('body'),
-  //        success:    function (data) {
-  //            this.append(data);
-  //        },
-  //        error:    function (xhr, type) {
-  //            alert('Error!');
-  //        }
-  //     });
-  //
+  function mimeToDataType(mime) {
+    if (mime) mime = mime.split(';', 2)[0]
+    return mime && ( mime == htmlType ? 'html' :
+      mime == jsonType ? 'json' :
+      scriptTypeRE.test(mime) ? 'script' :
+      xmlTypeRE.test(mime) && 'xml' ) || 'text'
+  }
+
+  function appendQuery(url, query) {
+    if (query == '') return url
+    return (url + '&' + query).replace(/[&?]{1,2}/, '?')
+  }
+
+  // serialize payload and append it to the URL for GET requests
+  function serializeData(options) {
+    if (options.processData && options.data && $.type(options.data) != "string")
+      options.data = $.param(options.data, options.traditional)
+    if (options.data && (!options.type || options.type.toUpperCase() == 'GET'))
+      options.url = appendQuery(options.url, options.data)
+  }
+
   $.ajax = function(options){
-    var settings = $.extend({}, options || {});
-    for (key in $.ajaxSettings) if (settings[key] === undefined) settings[key] = $.ajaxSettings[key];
+    var settings = $.extend({}, options || {})
+    for (key in $.ajaxSettings) if (settings[key] === undefined) settings[key] = $.ajaxSettings[key]
 
-    ajaxStart(settings);
+    ajaxStart(settings)
 
     if (!settings.crossDomain) settings.crossDomain = /^([\w-]+:)?\/\/([^\/]+)/.test(settings.url) &&
-      RegExp.$2 != window.location.host;
+      RegExp.$2 != window.location.host
 
-    if (/=\?/.test(settings.url)) return $.ajaxJSONP(settings);
+    if (!settings.url) settings.url = window.location.toString()
+    serializeData(settings)
+    if (settings.cache === false) settings.url = appendQuery(settings.url, '_=' + Date.now())
 
-    if (!settings.url) settings.url = window.location.toString();
-    if (settings.data && !settings.contentType) settings.contentType = 'application/x-www-form-urlencoded';
-    if (isObject(settings.data)) settings.data = $.param(settings.data);
-
-    if (settings.type.match(/get/i) && settings.data) {
-      var queryString = settings.data;
-      if (settings.url.match(/\?.*=/)) {
-        queryString = '&' + queryString;
-      } else if (queryString[0] != '?') {
-        queryString = '?' + queryString;
-      }
-      settings.url += queryString;
+    var dataType = settings.dataType, hasPlaceholder = /=\?/.test(settings.url)
+    if (dataType == 'jsonp' || hasPlaceholder) {
+      if (!hasPlaceholder)
+        settings.url = appendQuery(settings.url,
+          settings.jsonp ? (settings.jsonp + '=?') : settings.jsonp === false ? '' : 'callback=?')
+      return $.ajaxJSONP(settings)
     }
 
-    var mime = settings.accepts[settings.dataType],
+    var mime = settings.accepts[dataType],
         baseHeaders = { },
         protocol = /^([\w-]+:)\/\//.test(settings.url) ? RegExp.$1 : window.location.protocol,
-        xhr = $.ajaxSettings.xhr(), abortTimeout;
+        xhr = settings.xhr(), abortTimeout
 
-    if (!settings.crossDomain) baseHeaders['X-Requested-With'] = 'XMLHttpRequest';
-    if (mime) baseHeaders['Accept'] = mime;
-    settings.headers = $.extend(baseHeaders, settings.headers || {});
+    if (!settings.crossDomain) baseHeaders['X-Requested-With'] = 'XMLHttpRequest'
+    if (mime) {
+      baseHeaders['Accept'] = mime
+      if (mime.indexOf(',') > -1) mime = mime.split(',', 2)[0]
+      xhr.overrideMimeType && xhr.overrideMimeType(mime)
+    }
+    if (settings.contentType || (settings.contentType !== false && settings.data && settings.type.toUpperCase() != 'GET'))
+      baseHeaders['Content-Type'] = (settings.contentType || 'application/x-www-form-urlencoded')
+    settings.headers = $.extend(baseHeaders, settings.headers || {})
 
     xhr.onreadystatechange = function(){
       if (xhr.readyState == 4) {
-        clearTimeout(abortTimeout);
-        var result, error = false;
-        if ((xhr.status >= 200 && xhr.status < 300) || (xhr.status == 0 && protocol == 'file:')) {
-          if (mime == 'application/json' && !(/^\s*$/.test(xhr.responseText))) {
-            try { result = JSON.parse(xhr.responseText); }
-            catch (e) { error = e; }
-          }
-          else result = xhr.responseText;
-          if (error) ajaxError(error, 'parsererror', xhr, settings);
-          else ajaxSuccess(result, xhr, settings);
+        xhr.onreadystatechange = empty;
+        clearTimeout(abortTimeout)
+        var result, error = false
+        if ((xhr.status >= 200 && xhr.status < 300) || xhr.status == 304 || (xhr.status == 0 && protocol == 'file:')) {
+          dataType = dataType || mimeToDataType(xhr.getResponseHeader('content-type'))
+          result = xhr.responseText
+
+          try {
+            // http://perfectionkills.com/global-eval-what-are-the-options/
+            if (dataType == 'script')    (1,eval)(result)
+            else if (dataType == 'xml')  result = xhr.responseXML
+            else if (dataType == 'json') result = blankRE.test(result) ? null : $.parseJSON(result)
+          } catch (e) { error = e }
+
+          if (error) ajaxError(error, 'parsererror', xhr, settings)
+          else ajaxSuccess(result, xhr, settings)
         } else {
-          ajaxError(null, 'error', xhr, settings);
+          ajaxError(xhr.statusText || null, xhr.status ? 'error' : 'abort', xhr, settings)
         }
       }
-    };
+    }
 
-    xhr.open(settings.type, settings.url, true);
+    var async = 'async' in settings ? settings.async : true
+    xhr.open(settings.type, settings.url, async)
 
-    if (settings.contentType) settings.headers['Content-Type'] = settings.contentType;
-    for (name in settings.headers) xhr.setRequestHeader(name, settings.headers[name]);
+    for (name in settings.headers) xhr.setRequestHeader(name, settings.headers[name])
 
     if (ajaxBeforeSend(xhr, settings) === false) {
-      xhr.abort();
-      return false;
+      xhr.abort()
+      return false
     }
 
     if (settings.timeout > 0) abortTimeout = setTimeout(function(){
-        xhr.onreadystatechange = empty;
-        xhr.abort();
-        ajaxError(null, 'timeout', xhr, settings);
-      }, settings.timeout);
+        xhr.onreadystatechange = empty
+        xhr.abort()
+        ajaxError(null, 'timeout', xhr, settings)
+      }, settings.timeout)
 
-    xhr.send(settings.data);
-    return xhr;
-  };
-
-  // ### $.get
-  //
-  // Load data from the server using a GET request
-  //
-  // *Arguments:*
-  //
-  //     url     — url to which the request is sent
-  //     success — callback that is executed if the request succeeds
-  //
-  // *Example:*
-  //
-  //     $.get(
-  //        '/projects/42',
-  //        function (data) {
-  //            $('body').append(data);
-  //        }
-  //     );
-  //
-  $.get = function(url, success){ return $.ajax({ url: url, success: success }) };
-
-  // ### $.post
-  //
-  // Load data from the server using POST request
-  //
-  // *Arguments:*
-  //
-  //     url        — url to which the request is sent
-  //     [data]     — data to send to server, can be string or object
-  //     [success]  — callback that is executed if the request succeeds
-  //     [dataType] — type of expected response
-  //                  'json', 'xml', 'html', or 'text'
-  //
-  // *Example:*
-  //
-  //     $.post(
-  //        '/projects',
-  //        { name: 'Zepto.js' },
-  //        function (data) {
-  //            $('body').append(data);
-  //        },
-  //        'html'
-  //     );
-  //
-  $.post = function(url, data, success, dataType){
-    if ($.isFunction(data)) dataType = dataType || success, success = data, data = null;
-    return $.ajax({ type: 'POST', url: url, data: data, success: success, dataType: dataType });
-  };
-
-  // ### $.getJSON
-  //
-  // Load JSON from the server using GET request
-  //
-  // *Arguments:*
-  //
-  //     url     — url to which the request is sent
-  //     success — callback that is executed if the request succeeds
-  //
-  // *Example:*
-  //
-  //     $.getJSON(
-  //        '/projects/42',
-  //        function (json) {
-  //            projects.push(json);
-  //        }
-  //     );
-  //
-  $.getJSON = function(url, success){
-    return $.ajax({ url: url, success: success, dataType: 'json' });
-  };
-
-  // ### $.fn.load
-  //
-  // Load data from the server into an element
-  //
-  // *Arguments:*
-  //
-  //     url     — url to which the request is sent
-  //     [success] — callback that is executed if the request succeeds
-  //
-  // *Examples:*
-  //
-  //     $('#project_container').get(
-  //        '/projects/42',
-  //        function () {
-  //            alert('Project was successfully loaded');
-  //        }
-  //     );
-  //
-  //     $('#project_comments').get(
-  //        '/projects/42 #comments',
-  //        function () {
-  //            alert('Comments was successfully loaded');
-  //        }
-  //     );
-  //
-  $.fn.load = function(url, success){
-    if (!this.length) return this;
-    var self = this, parts = url.split(/\s/), selector;
-    if (parts.length > 1) url = parts[0], selector = parts[1];
-    $.get(url, function(response){
-      self.html(selector ?
-        $(document.createElement('div')).html(response).find(selector).html()
-        : response);
-      success && success.call(self);
-    });
-    return this;
-  };
-
-  var escape = encodeURIComponent;
-
-  function serialize(params, obj, traditional, scope){
-    var array = $.isArray(obj);
-    $.each(obj, function(key, value) {
-      if (scope) key = traditional ? scope : scope + '[' + (array ? '' : key) + ']';
-      // handle data in serializeArray() format
-      if (!scope && array) params.add(value.name, value.value);
-      // recurse into nested objects
-      else if (traditional ? $.isArray(value) : isObject(value))
-        serialize(params, value, traditional, key);
-      else params.add(key, value);
-    });
+    // avoid sending empty string (#319)
+    xhr.send(settings.data ? settings.data : null)
+    return xhr
   }
 
-  // ### $.param
-  //
-  // Encode object as a string of URL-encoded key-value pairs
-  //
-  // *Arguments:*
-  //
-  //     obj — object to serialize
-  //     [traditional] — perform shallow serialization
-  //
-  // *Example:*
-  //
-  //     $.param( { name: 'Zepto.js', version: '0.6' } );
-  //
+  // handle optional data/success arguments
+  function parseArguments(url, data, success, dataType) {
+    var hasData = !$.isFunction(data)
+    return {
+      url:      url,
+      data:     hasData  ? data : undefined,
+      success:  !hasData ? data : $.isFunction(success) ? success : undefined,
+      dataType: hasData  ? dataType || success : success
+    }
+  }
+
+  $.get = function(url, data, success, dataType){
+    return $.ajax(parseArguments.apply(null, arguments))
+  }
+
+  $.post = function(url, data, success, dataType){
+    var options = parseArguments.apply(null, arguments)
+    options.type = 'POST'
+    return $.ajax(options)
+  }
+
+  $.getJSON = function(url, data, success){
+    var options = parseArguments.apply(null, arguments)
+    options.dataType = 'json'
+    return $.ajax(options)
+  }
+
+  $.fn.load = function(url, data, success){
+    if (!this.length) return this
+    var self = this, parts = url.split(/\s/), selector,
+        options = parseArguments(url, data, success),
+        callback = options.success
+    if (parts.length > 1) options.url = parts[0], selector = parts[1]
+    options.success = function(response){
+      self.html(selector ?
+        $('<div>').html(response.replace(rscript, "")).find(selector)
+        : response)
+      callback && callback.apply(self, arguments)
+    }
+    $.ajax(options)
+    return this
+  }
+
+  var escape = encodeURIComponent
+
+  function serialize(params, obj, traditional, scope){
+    var type, array = $.isArray(obj)
+    $.each(obj, function(key, value) {
+      type = $.type(value)
+      if (scope) key = traditional ? scope : scope + '[' + (array ? '' : key) + ']'
+      // handle data in serializeArray() format
+      if (!scope && array) params.add(value.name, value.value)
+      // recurse into nested objects
+      else if (type == "array" || (!traditional && type == "object"))
+        serialize(params, value, traditional, key)
+      else params.add(key, value)
+    })
+  }
+
   $.param = function(obj, traditional){
-    var params = [];
-    params.add = function(k, v){ this.push(escape(k) + '=' + escape(v)) };
-    serialize(params, obj, traditional);
-    return params.join('&').replace('%20', '+');
-  };
-})(Zepto);
+    var params = []
+    params.add = function(k, v){ this.push(escape(k) + '=' + escape(v)) }
+    serialize(params, obj, traditional)
+    return params.join('&').replace(/%20/g, '+')
+  }
+})(Zepto)
