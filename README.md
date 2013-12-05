@@ -2,7 +2,7 @@
 
 Zepto for the Rails asset pipeline.
 
-This gem provides Zepto 0.8.0.
+This gem provides Zepto 1.0.0
 
 ## Installation
 
