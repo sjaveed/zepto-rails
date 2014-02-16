@@ -1,5 +1,6 @@
-/* Zepto v1.0-1-ga3cab6c - polyfill zepto detect event ajax form fx - zeptojs.com/license */
-
+//     Zepto.js
+//     (c) 2010-2013 Thomas Fuchs
+//     Zepto.js may be freely distributed under the MIT license.
 
 ;(function(undefined){
   if (String.prototype.trim === undefined) // fix for iOS 3.2

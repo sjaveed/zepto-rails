@@ -8,5 +8,8 @@
 //= require 'zepto/form.js'
 //= require 'zepto/assets.js'
 //= require 'zepto/data.js'
+//= require 'zepto/selector.js'
 //= require 'zepto/touch.js'
 //= require 'zepto/gesture.js'
+//= require 'zepto/stack.js'
+//= require 'zepto/ios3.js'
