@@ -1,7 +1,5 @@
-//= require 'zepto/polyfill.js'
 //= require 'zepto'
 //= require 'zepto/event.js'
-//= require 'zepto/detect.js'
-//= require 'zepto/fx.js'
 //= require 'zepto/ajax.js'
 //= require 'zepto/form.js'
+//= require 'zepto/ie.js'
